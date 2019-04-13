@@ -112,9 +112,18 @@ def prt_instr_attrs(instr):
         printf("opnd %d: %s\n", op_index
             , instr.getDefaultOperandRepresentation(op_index))
 
+## Purpose: Get the number of arguments expected for a function
+## Input: func_db_obj <type 'ghidra.program.database.function.FunctionDB'>
+## Output: len(func_db_obj.getParameters())    length of getParameters() list
 def get_num_args(func_db_obj):
     return len(func_db_obj.getParameters())
 
+## Purpose: Assuming cdecl calling convention, walk up binary from addr to find the arguments before a function call
+## Input: addr      Address object for initial call function()
+##        num_args  Number of arguments passed to function() to search for
+## Output: args_list   List of instructionDB objects for parameter passing instructions
+## Note: Currently only handles MOV [ESP but needs to handle PUSH
+##       If an instruction operand is a register so the value is still not known, then call find_register_val(instr_obj, operand) to find that register's value earlier in the binary
 def find_cdecl_args(addr, num_args):
     if debug: printf("\n[+] Finding cdecl args\n\n")
     ## Get the address of the function we want to stay within
@@ -149,6 +158,10 @@ def find_cdecl_args(addr, num_args):
             return args_list
         instrs_walked += 1
 
+## Purpose: When a register operand's value is unknown, walk up the binary to find the earlier value loaded into the register
+## Input: instr    instructionDB object (initial) ex: MOV [ESP], EAX
+##        needle   (string) register operand that is being searched for
+## Output: instr   instructionDB object (load) ex: LEA EAX, [EBP +-0x2c]
 def find_register_val(instr, needle):
     if debug: printf("\n[+] Finding value of %s\n\n", needle)
     instrs_walked = 0
@@ -158,6 +171,39 @@ def find_register_val(instr, needle):
             if debug: printf("\n[+] Found %s loaded by %s\n"
                 , needle, instr.toString())
             return instr
+
+## Purpose: Match the offset within the sizeof_local_vars list and return the tuple entry for a matching variable
+## Input: offset                signed int 
+##        sizeof_local_vars     list of tuples with (offset, varname, varsize)
+## Output: var_tup     tuple with (offset, varname, varsize)
+## Note: returns None if there is no match
+def get_local_var_from_offset(offset, sizeof_local_vars):
+    if debug: printf("\n[+] Getting local variables from stack offset\n\n")
+    for var_tup in sizeof_local_vars:
+        if offset == var_tup[0]:
+            return var_tup
+    return None 
+
+## Purpose: Match the instruction operand to the local variable list
+## Input:    instr_obj_list       list of InstructionDB objects
+##           sizeof_local_vars    list of tuples with (offset, varname, varsize)
+## Output:   arg_list     list of arguments found from local variable list and immediate values
+def match_local_var_from_instr(instr_obj_list, sizeof_local_vars):
+    if debug: printf("\n[+] Matching local variables to function arguments\n\n")
+    arg_list = []
+    for instr_obj in instr_obj_list:
+        mnem = instr_obj.mnemonicString
+        if mnem in "LEA" and "[EBP" in instr_obj.getDefaultOperandRepresentation(1):
+            ebp_offset = instr_obj.getOpObjects(1)[1].getValue()
+            ret_offset = ebp_offset - 4
+            var = get_local_var_from_offset(ret_offset
+                , sizeof_local_vars)
+            if var != None:
+                arg_list.append(var)
+        ## 16384 is assumed to be the operandType code for immediate value
+        if mnem in "MOV" and instr_obj.getOperandType(1) == 16384:
+            arg_list.append(instr_obj.getOpObjects(1)[0])
+    return arg_list
 
 def main():
     listing = currentProgram.getListing()
@@ -208,7 +254,9 @@ def main():
     prt_vars(sizeof_local_vars)
 
     strncpy_num_args = get_num_args(strncpy_func_obj)
-    print find_cdecl_args(strncpy_xref_addr, strncpy_num_args)
+    found_arg_instrs = find_cdecl_args(strncpy_xref_addr, strncpy_num_args)
+
+    print match_local_var_from_instr(found_arg_instrs, sizeof_local_vars)
         
 if __name__ == "__main__":
     main()
