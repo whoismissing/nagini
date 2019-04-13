@@ -163,7 +163,7 @@ def find_cdecl_args(addr, num_args):
 ##        reg   (string) register operand that is being searched for
 ## Output: instr   instructionDB object (load) ex: LEA EAX, [EBP +-0x2c]
 def find_register_val(instr, reg):
-    if debug: printf("\n[+] Finding value of %s\n", reg)
+    #if debug: printf("\n[+] Finding value of %s\n", reg)
 
     instrs_walked = 0
     while instrs_walked < 20:
@@ -179,7 +179,7 @@ def find_register_val(instr, reg):
 ## Output: var_tup     tuple with (offset, varname, varsize)
 ## Note: returns None if there is no match
 def offset_to_var(offset, sizeof_local_vars):
-    if debug: printf("\n[+] Getting local variables from stack offset\n")
+    #if debug: printf("\n[+] Getting local variables from stack offset\n")
     for var_tup in sizeof_local_vars:
         if offset == var_tup[0]:
             return var_tup
@@ -207,7 +207,7 @@ def instrs_to_vars(instrs, sizeof_local_vars):
             arg_list.append( (instr.getOpObjects(1)[0],) )
     return arg_list
 
-def prt_arg(args,name):
+def prt_arg(args, name):
     if debug: printf("\n[+] Printing arguments:\n")
     printf("Function: %s\n", name)
 
@@ -220,25 +220,30 @@ def prt_arg(args,name):
             printf("\t%-20s %-10s %s\n", arg[0], "", int(str(arg[0]),16))
             values.append(int(str(arg[0]),16))
 
-    print values
-    #if values[2] > values[0]:
-    #    print "AHHHHHHHHHHHHHHHHHHHHHHHHHHHG"
+def check_vuln(addr, args, name):
 
-
+    values = []
+    if name == "strncpy":
+        for arg in args:
+            if len(arg) == 3: values.append(arg[2])
+            elif len(arg) == 1: values.append(int(str(arg[0]),16))
+        if values[2] > values[0]:
+            print addr, "AHHHHHHHHHHHHHHHHHHHHHHHHHHHG"
+            exit()
 
 def main():
+    
+    name = "strncpy"
+
     listing = currentProgram.getListing()
     #dump(listing)
 
     all_funcs = get_all_funcs(listing)
     #prt_funcs(all_funcs)
     
-    strncpy_funcs = get_funcs(all_funcs, "puts")
+    strncpy_funcs = get_funcs(all_funcs, name)
     prt_funcs(strncpy_funcs)
-
-
     index = 0
-    name = "puts"
     for strncpy_func_obj in strncpy_funcs:
         print "============== TEST", index
         #dump(strncpy_func_obj)
@@ -293,6 +298,7 @@ def main():
 
             args = instrs_to_vars(found_arg_instrs, sizeof_local_vars)
             prt_arg(args,name)
+            check_vuln(strncpy_xref_addr,args,name)
         
 if __name__ == "__main__":
     main()
