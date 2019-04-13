@@ -8,53 +8,78 @@ debug = True
 ## Input: obj    some object whose type and attributes are unclear
 ## Note: Especially helpful for learning how to interact with Ghidra API
 def dump(obj):
-    if debug: printf("\n[+] Dumping object attributes to console\n\n")
-    print type(obj)
+    if debug:
+        printf("[+] Dumping object attributes: %s\n", obj)
+        printf("[+] Object type: %s\n", str(type(obj)))
+        printf("[+] Attributes:\n")
     for attr in dir(obj):
         try:
-            print("obj.%s = %r" % (attr, getattr(obj, attr)))
-        ## Object is write only so handle error
-        except AttributeError as error:
-            print error
+            printf("\t%-30s: %s\n", attr, getattr(obj,attr))
+        except:
+            # Write only object, cannot get value
+            printf("\t%-30s: %s\n", attr, "ERROR: Cannot get value")
 
-## Purpose: Get an array of all of the FunctionDB objects from the ListingDB
+## Purpose: Get an list object of all of the FunctionDB objects from the ListingDB
 ## Input:  listing      <type 'ghidra.program.database.ListingDB'>
 ## Output: func_list    list of <type 'ghidra.program.database.function.FunctionDB'>
 def get_all_funcs(listing):
     ## func_iter is of <type 'ghidra.program.database.function.FunctionManagerDB$FunctionIteratorDB'>
     func_iter = listing.getFunctions(True)
-    func_list = []
-
+    lst = []
     while func_iter.hasNext():
         ## Get the FunctionDB object from FunctionIteratorDB
-        func_db_obj = func_iter.next()
-        func_list.append(func_db_obj)
+        lst.append(func_iter.next())
     ## Return a list of FunctionDB objects
-    return func_list
+    return lst
+
+## Purpose: Return a function obj 
+## Input:   func_list       list of <type 'ghidra.program.database.function.FunctionDB'>  
+##          name            strings, ex: strcpy, gets, etc
+## Output:  fuction list    list of <type 'ghidra.program.database.function.FunctionDB'> 
+def get_funcs(func_list, name):
+    lst = []
+    for func_db_obj in func_list:
+        if name == func_db_obj.getName():
+            lst.append(func_db_obj)
+
+    return lst
 
 ## Purpose: Print all of the function names and starting addresses given a list of FunctionDB objects
 ## Input: func_list    list of <type 'ghidra.program.database.function.FunctionDB'>
-def prt_all_funcs(func_list):
-    for func_db_obj in func_list:
-        address_set_obj = func_db_obj.body
-        func_name = func_db_obj.getName()
-        print str(address_set_obj.minAddress) + " " + func_name
+def prt_funcs(funcs):
+    if debug:
+        printf("[+] Printing list of functions: \n")
+    for func in funcs:
+        func_name = func.getName()
+        printf("\t%-10s: %s\n", str(func.body.minAddress), func_name)
 
 ## Purpose: Returns a list of the local variables of the input function
-## Input: func_db_obj   <type 'ghidra.program.database.function.FunctionDB'> 
-## Output: list_local_vars     list of tuples containing stackOffset and varName
-## Note: May be a redundant function for func_db_obj.getVariables(0)
+## Input:   func            <type 'ghidra.program.database.function.FunctionDB'> 
+## Output:  lst of vars     list of tuples containing stackOffset and varName
+## Note: May be a redundant function for func.getVariables(0)
 ##       The stackOffset is based off of the return address NOT ebp
-def get_local_vars(func_db_obj):
-    all_variable_objs = func_db_obj.allVariables
-    list_local_vars = []
-    for var in all_variable_objs:
-        list_local_vars.append((var.stackOffset, var.name)) 
-    return list_local_vars
+def get_vars(func):
+    vars = func.allVariables
+    lst = []
+    for var in vars:
+        lst.append((var.stackOffset, var.name)) 
+    return lst
+
+## Purpose: Print all of the variables in the list of variables
+## Input:   var_list    list of variable
+def prt_vars(vars):
+    if debug:
+        printf("[+] Printing list of varibles: \n")
+    printf("\t%-10s: %-20s %s\n", "Offset", "Name", "Size (guess)")
+    for var in vars:
+        if len(var) == 3:
+            printf("\t%-10s: %-20s %s\n", var[0], var[1], var[2])
+        else:
+            printf("\t%-10s: %s\n", var[0], var[1])
 
 ## Purpose: Return guesses on the size of local variables in the function 
 ##          based on the distance between stack offsets
-## Input: list_local_vars    list of tuples returned from get_local_vars()
+## Input: list_local_vars    list of tuples returned from get_vars()
 ## Output: new_var_list      list of tuples (stackOffset, varName, guessedSize)
 ## Note: The stackOffset is based off of the return address NOT ebp
 def guess_local_var_sizes(list_local_vars):
@@ -136,11 +161,26 @@ def find_register_val(instr, needle):
 
 def main():
     listing = currentProgram.getListing()
-    all_funcs = get_all_funcs(listing)
+    #dump(listing)
 
-    strncpy_func_obj = all_funcs[5]
+    all_funcs = get_all_funcs(listing)
+    #prt_funcs(all_funcs)
+    
+    strncpy_funcs = get_funcs(all_funcs, "puts")
+    prt_funcs(strncpy_funcs)
+
     ## Get addr to strncpy() for init example
+    strncpy_funcs = get_funcs(all_funcs, "strncpy")
+    prt_funcs(strncpy_funcs)
+
+    ## play with the first instance of strncpy
+    strncpy_func_obj = strncpy_funcs[0]
+
     strncpy_ex_addr = strncpy_func_obj.body.minAddress
+    print "strncpy address: ", strncpy_ex_addr
+
+    list_vars = get_vars(strncpy_func_obj)
+    prt_vars(list_vars)
 
     ## getReferencesTo(Address) will return an array 
     ## of <type 'ghidra.program.database.references.MemReferenceDB'>
@@ -153,7 +193,6 @@ def main():
     ## Get the address of the instruction call strncpy()
     strncpy_xref_addr = xrefs_to_strncpy[0].fromAddress
 
-
     ## This will be used to go to the top of the function 
     ## and check the local variables within the stack frame
     ## <type 'ghidra.program.database.function.FunctionDB'>
@@ -162,15 +201,14 @@ def main():
     ## Returns the stack frame size based from the ret addr, 8 bytes added
     func_stack_size = func_obj_containing_addr.getStackFrame().localSize
 
-    list_local_vars = get_local_vars(func_obj_containing_addr)
-    print list_local_vars
+    list_local_vars = get_vars(func_obj_containing_addr)
+    prt_vars(list_local_vars)
 
     sizeof_local_vars = guess_local_var_sizes(list_local_vars)
-    print sizeof_local_vars
+    prt_vars(sizeof_local_vars)
 
     strncpy_num_args = get_num_args(strncpy_func_obj)
     print find_cdecl_args(strncpy_xref_addr, strncpy_num_args)
-
         
 if __name__ == "__main__":
     main()
