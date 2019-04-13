@@ -47,8 +47,8 @@ def get_funcs(func_list, name):
 ## Purpose: Print all of the function names and starting addresses given a list of FunctionDB objects
 ## Input: func_list    list of <type 'ghidra.program.database.function.FunctionDB'>
 def prt_funcs(funcs):
-    if debug:
-        printf("[+] Printing list of functions: \n")
+    if debug: printf("[+] Printing list of functions: \n")
+
     for func in funcs:
         func_name = func.getName()
         printf("\t%-10s: %s\n", str(func.body.minAddress), func_name)
@@ -68,8 +68,8 @@ def get_vars(func):
 ## Purpose: Print all of the variables in the list of variables
 ## Input:   var_list    list of variable
 def prt_vars(vars):
-    if debug:
-        printf("[+] Printing list of varibles: \n")
+    if debug: printf("[+] Printing list of varibles: \n")
+
     printf("\t%-10s: %-20s %s\n", "Offset", "Name", "Size (guess)")
     for var in vars:
         if len(var) == 3:
@@ -82,29 +82,30 @@ def prt_vars(vars):
 ## Input: list_local_vars    list of tuples returned from get_vars()
 ## Output: new_var_list      list of tuples (stackOffset, varName, guessedSize)
 ## Note: The stackOffset is based off of the return address NOT ebp
-def guess_local_var_sizes(list_local_vars):
-    if debug: printf("\n[+] Guessing sizes of local variables\n\n")
-    new_var_list = []
-    prev_offset = abs(list_local_vars[0][0])
-    new_var_list.append(
-        (list_local_vars[0][0], list_local_vars[0][1], prev_offset))
+def guess_local_var_sizes(vars):
+    # if debug: printf("[+] Guessing sizes of local variables\n")
+    lst = []
+    var1 = vars[0]
+    prev_offset = abs(var1[0])
+    lst.append(
+        (var1[0], var1[1], prev_offset))
 
-    if len(list_local_vars) < 2:
-        return new_var_list
+    if len(vars) < 2: return lst
 
-    for local in range(1, len(list_local_vars)):
-        curr_offset = abs(list_local_vars[local][0])
+    for var in vars[1:]:
+        curr_offset = abs(var[0])
         if curr_offset > prev_offset:
             var_size = curr_offset - prev_offset
-            new_var_list.append(
-                (list_local_vars[local][0], list_local_vars[local][1], var_size))
+            lst.append(
+                (var[0], var[1], var_size))
         prev_offset = curr_offset
-    return new_var_list
+
+    return lst
 
 ## Purpose: Print operands of an instruction for debugging
 ## Input: instr    <type 'ghidra.program.database.code.InstructionDB'>
 def prt_instr_attrs(instr):
-    if debug: printf("\n[+] Printing instruction obj attributes\n\n")
+    if debug: printf("\n[+] Printing instruction obj attributes\n")
     #dump(instr)
     num_opnds = instr.numOperands
     print "mnemonic: " + str(instr.mnemonicString)
@@ -125,7 +126,7 @@ def get_num_args(func_db_obj):
 ## Note: Currently only handles MOV [ESP but needs to handle PUSH
 ##       If an instruction operand is a register so the value is still not known, then call find_register_val(instr_obj, operand) to find that register's value earlier in the binary
 def find_cdecl_args(addr, num_args):
-    if debug: printf("\n[+] Finding cdecl args\n\n")
+    #if debug: printf("\n[+] Finding cdecl args\n")
     ## Get the address of the function we want to stay within
     top_of_function = getFunctionContaining(addr).body.minAddress
     instrs_walked = 0
@@ -140,8 +141,7 @@ def find_cdecl_args(addr, num_args):
         instr_str = instr_obj.toString()
         ## Check if mnem is MOV [ESP], 
         if mnem in "MOV" and "[ESP" in instr_obj.getDefaultOperandRepresentation(0): 
-            if debug: printf("\n[+] Possible argument found! %s\n\n"
-                ,instr_str)
+            if debug: printf("\n[+] Possible argument found! %s\n" ,instr_str)
             ## If operand 1 is a register,
             ## walk the binary again and
             ## see if you can find where the arg is coming from
@@ -160,16 +160,17 @@ def find_cdecl_args(addr, num_args):
 
 ## Purpose: When a register operand's value is unknown, walk up the binary to find the earlier value loaded into the register
 ## Input: instr    instructionDB object (initial) ex: MOV [ESP], EAX
-##        needle   (string) register operand that is being searched for
+##        reg   (string) register operand that is being searched for
 ## Output: instr   instructionDB object (load) ex: LEA EAX, [EBP +-0x2c]
-def find_register_val(instr, needle):
-    if debug: printf("\n[+] Finding value of %s\n\n", needle)
+def find_register_val(instr, reg):
+    if debug: printf("\n[+] Finding value of %s\n", reg)
+
     instrs_walked = 0
     while instrs_walked < 20:
         instr = getInstructionBefore(instr)
-        if needle in instr.getDefaultOperandRepresentation(0):
+        if reg in instr.getDefaultOperandRepresentation(0):
             if debug: printf("\n[+] Found %s loaded by %s\n"
-                , needle, instr.toString())
+                , reg, instr.toString())
             return instr
 
 ## Purpose: Match the offset within the sizeof_local_vars list and return the tuple entry for a matching variable
@@ -177,8 +178,8 @@ def find_register_val(instr, needle):
 ##        sizeof_local_vars     list of tuples with (offset, varname, varsize)
 ## Output: var_tup     tuple with (offset, varname, varsize)
 ## Note: returns None if there is no match
-def get_local_var_from_offset(offset, sizeof_local_vars):
-    if debug: printf("\n[+] Getting local variables from stack offset\n\n")
+def offset_to_var(offset, sizeof_local_vars):
+    if debug: printf("\n[+] Getting local variables from stack offset\n")
     for var_tup in sizeof_local_vars:
         if offset == var_tup[0]:
             return var_tup
@@ -188,22 +189,42 @@ def get_local_var_from_offset(offset, sizeof_local_vars):
 ## Input:    instr_obj_list       list of InstructionDB objects
 ##           sizeof_local_vars    list of tuples with (offset, varname, varsize)
 ## Output:   arg_list     list of arguments found from local variable list and immediate values
-def match_local_var_from_instr(instr_obj_list, sizeof_local_vars):
-    if debug: printf("\n[+] Matching local variables to function arguments\n\n")
+def instrs_to_vars(instrs, sizeof_local_vars):
+    if debug: printf("[+] Matching local variables to function arguments\n")
+
     arg_list = []
-    for instr_obj in instr_obj_list:
-        mnem = instr_obj.mnemonicString
-        if mnem in "LEA" and "[EBP" in instr_obj.getDefaultOperandRepresentation(1):
-            ebp_offset = instr_obj.getOpObjects(1)[1].getValue()
+    for instr in instrs:
+        mnem = instr.mnemonicString
+        if (mnem in ["LEA"]) and ("[EBP" in instr.getDefaultOperandRepresentation(1)):
+            ebp_offset = instr.getOpObjects(1)[1].getValue()
             ret_offset = ebp_offset - 4
-            var = get_local_var_from_offset(ret_offset
+            var = offset_to_var(ret_offset
                 , sizeof_local_vars)
             if var != None:
                 arg_list.append(var)
         ## 16384 is assumed to be the operandType code for immediate value
-        if mnem in "MOV" and instr_obj.getOperandType(1) == 16384:
-            arg_list.append(instr_obj.getOpObjects(1)[0])
+        if mnem in "MOV" and instr.getOperandType(1) == 16384:
+            arg_list.append( (instr.getOpObjects(1)[0],) )
     return arg_list
+
+def prt_arg(args,name):
+    if debug: printf("\n[+] Printing arguments:\n")
+    printf("Function: %s\n", name)
+
+    values = []
+    for arg in args:
+        if len(arg) == 3:
+            printf("\t%-20s %-10s %s\n", arg[1], arg[0], arg[2])
+            values.append(arg[2])
+        elif len(arg) == 1:
+            printf("\t%-20s %-10s %s\n", arg[0], "", int(str(arg[0]),16))
+            values.append(int(str(arg[0]),16))
+
+    print values
+    #if values[2] > values[0]:
+    #    print "AHHHHHHHHHHHHHHHHHHHHHHHHHHHG"
+
+
 
 def main():
     listing = currentProgram.getListing()
@@ -215,48 +236,63 @@ def main():
     strncpy_funcs = get_funcs(all_funcs, "puts")
     prt_funcs(strncpy_funcs)
 
-    ## Get addr to strncpy() for init example
-    strncpy_funcs = get_funcs(all_funcs, "strncpy")
-    prt_funcs(strncpy_funcs)
 
-    ## play with the first instance of strncpy
-    strncpy_func_obj = strncpy_funcs[0]
+    index = 0
+    name = "puts"
+    for strncpy_func_obj in strncpy_funcs:
+        print "============== TEST", index
+        #dump(strncpy_func_obj)
+        index += 1
+        ## play with the first instance of strncpy
+        #strncpy_func_obj = strncpy_funcs[0]
 
-    strncpy_ex_addr = strncpy_func_obj.body.minAddress
-    print "strncpy address: ", strncpy_ex_addr
+        strncpy_ex_addr = strncpy_func_obj.body.minAddress
+        print name, "address: ", strncpy_ex_addr
 
-    list_vars = get_vars(strncpy_func_obj)
-    prt_vars(list_vars)
+        list_vars = get_vars(strncpy_func_obj)
+        prt_vars(list_vars)
 
-    ## getReferencesTo(Address) will return an array 
-    ## of <type 'ghidra.program.database.references.MemReferenceDB'>
-    xrefs_to_strncpy = getReferencesTo(strncpy_ex_addr)
+        ## getReferencesTo(Address) will return an array 
+        ## of <type 'ghidra.program.database.references.MemReferenceDB'>
+        xrefs_to_strncpy = getReferencesTo(strncpy_ex_addr)
 
-    #for i in xrefs_to_strncpy:
-        #dump(i)
-        #print i.fromAddress
+        for i in xrefs_to_strncpy:
+            #dump(i)
+            #print i.fromAddress
+            strncpy_xref_addr = i.fromAddress
+            print strncpy_xref_addr
 
-    ## Get the address of the instruction call strncpy()
-    strncpy_xref_addr = xrefs_to_strncpy[0].fromAddress
+        ## Get the address of the instruction call strncpy()
+        #strncpy_xref_addr = xrefs_to_strncpy[0].fromAddress
 
-    ## This will be used to go to the top of the function 
-    ## and check the local variables within the stack frame
-    ## <type 'ghidra.program.database.function.FunctionDB'>
-    func_obj_containing_addr = getFunctionContaining(strncpy_xref_addr)
+        ## This will be used to go to the top of the function 
+        ## and check the local variables within the stack frame
+        ## <type 'ghidra.program.database.function.FunctionDB'>
+            func_obj_containing_addr = getFunctionContaining(strncpy_xref_addr)
 
-    ## Returns the stack frame size based from the ret addr, 8 bytes added
-    func_stack_size = func_obj_containing_addr.getStackFrame().localSize
+            ## Returns the stack frame size based from the ret addr, 8 bytes added
+            
+            try: 
+                func_stack_size = func_obj_containing_addr.getStackFrame().localSize
+            except: 
+                print "[-] No stack frame"
+                continue
 
-    list_local_vars = get_vars(func_obj_containing_addr)
-    prt_vars(list_local_vars)
+            list_local_vars = get_vars(func_obj_containing_addr)
+            prt_vars(list_local_vars)
 
-    sizeof_local_vars = guess_local_var_sizes(list_local_vars)
-    prt_vars(sizeof_local_vars)
+            sizeof_local_vars = guess_local_var_sizes(list_local_vars)
+            prt_vars(sizeof_local_vars)
 
-    strncpy_num_args = get_num_args(strncpy_func_obj)
-    found_arg_instrs = find_cdecl_args(strncpy_xref_addr, strncpy_num_args)
+            strncpy_num_args = get_num_args(strncpy_func_obj)
+            found_arg_instrs = find_cdecl_args(strncpy_xref_addr, strncpy_num_args)
 
-    print match_local_var_from_instr(found_arg_instrs, sizeof_local_vars)
+            if not found_arg_instrs:
+                print "[-] No arguments found"
+                continue
+
+            args = instrs_to_vars(found_arg_instrs, sizeof_local_vars)
+            prt_arg(args,name)
         
 if __name__ == "__main__":
     main()
