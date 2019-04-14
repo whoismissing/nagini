@@ -1,11 +1,10 @@
 #!/usr/bin/python2.7
 #@author: missing
 ## https://ghidra.re/ghidra_docs/api/ghidra/python/PythonScript.html
-import struct
 import ctypes
 
 debug = False
-debug = True
+#debug = True
 
 ## Purpose: Dump object attributes to console
 ## Input: obj    some object whose type and attributes are unclear
@@ -38,13 +37,12 @@ def get_all_funcs(listing):
 ## Purpose: Return a function obj 
 ## Input:   func_list       list of <type 'ghidra.program.database.function.FunctionDB'>  
 ##          name            strings, ex: strcpy, gets, etc
-## Output:  lst             list of <type 'ghidra.program.database.function.FunctionDB'> 
+## Output:  lst             list of <type 'ghidra.program.database.function.FunctionDB'> that match to name
 def get_funcs(func_list, name):
     lst = []
     for func_db_obj in func_list:
         if name == func_db_obj.getName():
             lst.append(func_db_obj)
-
     return lst
 
 ## Purpose: Print all of the function names and starting addresses given a list of FunctionDB objects
@@ -108,7 +106,7 @@ def guess_local_var_sizes(vars):
 ## Purpose: Print operands of an instruction for debugging
 ## Input: instr    <type 'ghidra.program.database.code.InstructionDB'>
 def prt_instr_attrs(instr):
-    if debug: printf("\n[+] Printing instruction obj attributes\n")
+    if debug: printf("[+] Printing instruction obj attributes\n")
     #dump(instr)
     num_opnds = instr.numOperands
     print "mnemonic: " + str(instr.mnemonicString)
@@ -126,10 +124,10 @@ def get_num_args(func_db_obj):
 ## Input: addr      Address object for initial call function()
 ##        num_args  Number of arguments passed to function() to search for
 ## Output: args_list   List of instructionDB objects for parameter passing instructions
-## Note: Currently only handles MOV [ESP but needs to handle PUSH
+## Note: Currently only handles MOV [ESP and PUSH register / immediate
 ##       If an instruction operand is a register so the value is still not known, then call find_register_val(instr_obj, operand) to find that register's value earlier in the binary
 def find_cdecl_args(addr, num_args):
-    if debug: printf("\n[+] Finding cdecl args\n")
+    if debug: printf("[+] Finding cdecl args\n")
     ## Get the address of the function we want to stay within
     top_of_function = getFunctionContaining(addr).body.minAddress
     instrs_walked = 0
@@ -144,13 +142,14 @@ def find_cdecl_args(addr, num_args):
         instr_str = instr_obj.toString()
         ## Check if mnem is MOV [ESP], 
         if mnem in "MOV" and "[ESP" in instr_obj.getDefaultOperandRepresentation(0):
-            if debug: printf("\n[+] Possible argument found! %s\n" ,instr_str)
+            if debug: 
+                printf("[+] Possible argument found! %s\n", instr_str)
             ## If operand 1 is a register,
             ## walk the binary again and
             ## see if you can find where the arg is coming from
             ## 512 is the integer value for OperandType register
             if instr_obj.getOperandType(1) == 512:
-                if debug: printf("\n[+] Following register value in %s"
+                if debug: printf("[+] Following register value in %s\n"
                     , instr_obj.getDefaultOperandRepresentation(1))
                 args_list.append(find_register_val(instr_obj
                     , instr_obj.getDefaultOperandRepresentation(1)))
@@ -173,13 +172,13 @@ def find_cdecl_args(addr, num_args):
 ##        reg   (string) register operand that is being searched for
 ## Output: instr   instructionDB object (load) ex: LEA EAX, [EBP +-0x2c]
 def find_register_val(instr, reg):
-    #if debug: printf("\n[+] Finding value of %s\n", reg)
+    if debug: printf("[+] Finding value of %s\n", reg)
     instrs_walked = 0
     while instrs_walked < 20:
         instr = getInstructionBefore(instr)
         if reg in instr.getDefaultOperandRepresentation(0):
-            if debug: printf("\n[+] Found %s loaded by %s\n"
-                , reg, instr.toString())
+            if debug: printf("[+] %s Found %s loaded by %s\n"
+                , instr.getMinAddress(), reg, instr.toString())
             return instr
 
 ## Purpose: Match the offset within the sizeof_local_vars list and return the tuple entry for a matching variable
@@ -188,7 +187,7 @@ def find_register_val(instr, reg):
 ## Output: var_tup     tuple with (offset, varname, varsize)
 ## Note: returns None if there is no match
 def offset_to_var(offset, sizeof_local_vars):
-    #if debug: printf("\n[+] Getting local variables from stack offset\n")
+    #if debug: printf("[+] Getting local variables from stack offset\n")
     for var_tup in sizeof_local_vars:
         if offset == var_tup[0]:
             return var_tup
@@ -198,13 +197,14 @@ def offset_to_var(offset, sizeof_local_vars):
 ## Input:    instr_obj_list       list of InstructionDB objects
 ##           sizeof_local_vars    list of tuples with (offset, varname, varsize)
 ## Output:   arg_list     list of arguments found from local variable list and immediate values
-def instrs_to_vars(instrs, sizeof_local_vars):
+## Note: mnemonics are assumed to be from x86 ISA
+def x86_instrs_to_vars(instrs, sizeof_local_vars):
     if debug: printf("[+] Matching local variables to function arguments\n")
-    print instrs
+    #print instrs
     arg_list = []
     for instr in instrs:
         mnem = instr.mnemonicString
-        if mnem == "LEA":
+        if mnem == "LEA" and "EBP" in instr.getDefaultOperandRepresentation(1):
             if "[EBP" in instr.getDefaultOperandRepresentation(1):
                 ebp_offset = instr.getOpObjects(1)[1].getSignedValue()          
             elif "EBP]" in instr.getDefaultOperandRepresentation(1):
@@ -226,7 +226,6 @@ def instrs_to_vars(instrs, sizeof_local_vars):
 def prt_arg(args, name):
     if debug: printf("\n[+] Printing arguments:\n")
     printf("Function: %s\n", name)
-
     values = []
     for arg in args:
         if len(arg) == 3:
@@ -238,91 +237,115 @@ def prt_arg(args, name):
 
 ## Purpose: Check func name and verify arguments for possible vulnerabilities based on a few signatures
 ## Input: addr    address object ( location of call func instruction )
-##        args    list of tuples that represent the arguments being passed to the function
 ##        name    string - name of the function being called
-def check_vuln(addr, args, name):
+##        args    list of tuples that represent the arguments being passed to the function
+##        arg_instrs    list of InstructionDB objects used to verify parameter safety
+## Output: addr   address object ( location of call func instruction )
+##         None   Nonetype object ( if function call was not found to be vulnerable)
+def check_vuln_args(addr, name, args, arg_instrs):
     values = []
     if name == "strncpy":
         for arg in args:
             if len(arg) == 3: values.append(arg[2])
             elif len(arg) == 1: values.append(int(str(arg[0]),16))
         if values[2] > values[0]:
-            print addr, "[!] call strncpy(dst, src, size) BUFFER OVERFLOW - size is bigger than dst buffer length"
-            prt_arg(args, name)
+            print "[!]", addr, "call strncpy(dst, src, size) POSSIBLE BUFFER OVERFLOW - size is bigger than guessed dst buffer length"
+            return addr
+
+    if name == "strcpy":
+        ## if dst is on stack and src is non-data section
+        ## 8704 is assumed to be the OperandType code for stack offset 
+        ## ex: [0xfffffc63 + EBP]
+        if (arg_instrs[0].getOperandType(1) != 8256) and (arg_instrs[0].getOperandType(0) == 8704):
+            print "[!]", addr, "call strcpy(dst, src) POSSIBLE BUFFER OVERFLOW - dst buffer is on stack and src is non-data section"
+    
+    if name == "printf":
+        ## 8256 is assumed to be the OperandType code of
+        ## data section address
+        if (len(args) == 1) and (arg_instrs[0].getOperandType(0) != 8256):
+            print "[!]", addr, "call printf(var) POSSIBLE FORMAT STRING ATTACK - only one non-data section argument passed to printf"
+            return addr
+
+    return None
 
 ## Purpose: Loop through list of specified vulnerable functions to search for, find arguments to those functions, and pass them to check_vuln()
 ##          to check if the function is used in a vulnerable way
 ## Input: func_list    list of strings Ex: ["strcpy", "strncpy", ...]
-def find_vuln_funcs(func_list):
+def find_vuln_funcs(func_name):
+    name = func_name
 
-    for func_name in func_list:
-        name = func_name
+    listing = currentProgram.getListing()
 
-        listing = currentProgram.getListing()
+    all_funcs = get_all_funcs(listing)
+    #prt_funcs(all_funcs)
+    
+    func_obj_list = get_funcs(all_funcs, name)
+    #prt_funcs(func_obj_list)
+    index = 0
+    for func_obj in func_obj_list:
+        print "============== SCANNING", name, index,"==============" 
+        index += 1
 
-        all_funcs = get_all_funcs(listing)
-        #prt_funcs(all_funcs)
-        
-        func_obj_list = get_funcs(all_funcs, name)
-        #prt_funcs(func_obj_list)
-        index = 0
-        for func_obj in func_obj_list:
-            print "============== FUNCTION OBJ", index
-            index += 1
+        func_addr = func_obj.body.minAddress
+        print "[+]", name, "address: ", func_addr
 
-            func_addr = func_obj.body.minAddress
-            print name, "address: ", func_addr
+        list_vars = get_vars(func_obj)
+        #prt_vars(list_vars)
 
-            list_vars = get_vars(func_obj)
-            #prt_vars(list_vars)
+        ## getReferencesTo(Address) will return an array 
+        ## of <type 'ghidra.program.database.references.MemReferenceDB'>
+        xrefs_to_func = getReferencesTo(func_addr)
 
-            ## getReferencesTo(Address) will return an array 
-            ## of <type 'ghidra.program.database.references.MemReferenceDB'>
-            xrefs_to_func = getReferencesTo(func_addr)
+        for xref in xrefs_to_func:
+            xref_addr = xref.fromAddress
+            if debug: print "[+] xref addr:", xref_addr
 
-            for xref in xrefs_to_func:
-                xref_addr = xref.fromAddress
-                print "Ref addr:", xref_addr
+            ## This will be used to go to the top of the function 
+            ## and check the local variables within the stack frame
+            ## <type 'ghidra.program.database.function.FunctionDB'>
+            func_obj_containing_addr = getFunctionContaining(xref_addr)
 
-                ## This will be used to go to the top of the function 
-                ## and check the local variables within the stack frame
-                ## <type 'ghidra.program.database.function.FunctionDB'>
-                func_obj_containing_addr = getFunctionContaining(xref_addr)
-
-                ## Returns the stack frame size 
-                ## based from the ret addr, 8 bytes added
-                try: 
-                    func_stack_size = func_obj_containing_addr.getStackFrame().localSize
-                except:
+            ## Returns the stack frame size 
+            ## based from the ret addr, 8 bytes added
+            try: 
+                func_stack_size = func_obj_containing_addr.getStackFrame().localSize
+            except:
+                ## If getting the stack frame fails, 
+                ## probably a thunk function so skip it
+                if debug:
                     print "[-] No stack frame"
-                    continue
+                continue
 
-                list_local_vars = get_vars(func_obj_containing_addr)
-                #prt_vars(list_local_vars)
+            list_local_vars = get_vars(func_obj_containing_addr)
+            #prt_vars(list_local_vars)
 
-                sizeof_local_vars = guess_local_var_sizes(list_local_vars)
-                #prt_vars(sizeof_local_vars)
+            sizeof_local_vars = guess_local_var_sizes(list_local_vars)
+            #prt_vars(sizeof_local_vars)
 
-                num_args = get_num_args(func_obj)
-                found_arg_instrs = find_cdecl_args(xref_addr, num_args)
+            num_args = get_num_args(func_obj)
+            found_arg_instrs = find_cdecl_args(xref_addr, num_args)
 
-                if not found_arg_instrs:
+            ## If arguments for function call could not be found, skip
+            if not found_arg_instrs:
+                if debug:
                     print "[-] No arguments found"
-                    continue
-                elif num_args > len(found_arg_instrs):
-                    print "[-] Oh no shit hits the fan!!!!"
-                    continue
+                continue
+            elif num_args > len(found_arg_instrs):
+                if debug:
+                    print "[-] Not enough arguments found, arg instructions =", found_arg_instrs
+                continue
 
-                args = instrs_to_vars(found_arg_instrs, sizeof_local_vars)
-                prt_arg(args,name)
-                check_vuln(xref_addr, args, name)
+            args = x86_instrs_to_vars(found_arg_instrs, sizeof_local_vars)
+            #prt_arg(args,name)
+            check_vuln_args(xref_addr, name, args, found_arg_instrs)
 
 def main():
     
     func_list = ["strncpy", "strcpy", "printf" ]
-    find_vuln_funcs(func_list)
+    if debug: printf("[+] Scanning for vulnerabilities...\n")
+    for func_name in func_list:
+        find_vuln_funcs(func_name)
 
-        
 if __name__ == "__main__":
     main()
 
