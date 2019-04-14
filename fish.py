@@ -1,8 +1,11 @@
 #!/usr/bin/python2.7
 #@author: missing
 ## https://ghidra.re/ghidra_docs/api/ghidra/python/PythonScript.html
+import struct
+import ctypes
 
 debug = False
+debug = True
 
 ## Purpose: Dump object attributes to console
 ## Input: obj    some object whose type and attributes are unclear
@@ -140,7 +143,7 @@ def find_cdecl_args(addr, num_args):
             return
         instr_str = instr_obj.toString()
         ## Check if mnem is MOV [ESP], 
-        if mnem in "MOV" and "[ESP" in instr_obj.getDefaultOperandRepresentation(0): 
+        if mnem in "MOV" and "[ESP" in instr_obj.getDefaultOperandRepresentation(0):
             if debug: printf("\n[+] Possible argument found! %s\n" ,instr_str)
             ## If operand 1 is a register,
             ## walk the binary again and
@@ -152,6 +155,13 @@ def find_cdecl_args(addr, num_args):
                 args_list.append(find_register_val(instr_obj
                     , instr_obj.getDefaultOperandRepresentation(1)))
             else:
+                args_list.append(instr_obj)
+            args_found += 1
+        elif mnem in "PUSH":
+            if instr_obj.getOperandType(0) == 512:
+                args_list.append(find_register_val(instr_obj
+                    , instr_obj.getDefaultOperandRepresentation(0)))
+            elif instr_obj.getOperandType(0) == 16384:
                 args_list.append(instr_obj)
             args_found += 1
         if args_found == num_args:
@@ -190,20 +200,24 @@ def offset_to_var(offset, sizeof_local_vars):
 ## Output:   arg_list     list of arguments found from local variable list and immediate values
 def instrs_to_vars(instrs, sizeof_local_vars):
     if debug: printf("[+] Matching local variables to function arguments\n")
-
+    print instrs
     arg_list = []
     for instr in instrs:
         mnem = instr.mnemonicString
-        if (mnem in ["LEA"]) and ("[EBP" in instr.getDefaultOperandRepresentation(1)):
-            ebp_offset = instr.getOpObjects(1)[1].getValue()
-            ret_offset = ebp_offset - 4
-            var = offset_to_var(ret_offset
-                , sizeof_local_vars)
+        if mnem == "LEA":
+            if "[EBP" in instr.getDefaultOperandRepresentation(1):
+                ebp_offset = instr.getOpObjects(1)[1].getSignedValue()          
+            elif "EBP]" in instr.getDefaultOperandRepresentation(1):
+                ebp_offset = instr.getOpObjects(1)[0].getSignedValue()
+            ret_offset = ctypes.c_int(int(ebp_offset)).value - 4
+            var = offset_to_var(ret_offset, sizeof_local_vars)
             if var != None:
                 arg_list.append(var)
         ## 16384 is assumed to be the operandType code for immediate value
-        if mnem in "MOV" and instr.getOperandType(1) == 16384:
+        elif mnem == "MOV" and instr.getOperandType(1) == 16384:
             arg_list.append( (instr.getOpObjects(1)[0],) )
+        elif mnem == "PUSH" and instr.getOperandType(0) == 16384:
+            arg_list.append( (instr.getOpObjects(0)[0],) )
     return arg_list
 
 ## Purpose: Pretty print function name and arguments
@@ -268,6 +282,7 @@ def find_vuln_funcs(func_list):
 
             for xref in xrefs_to_func:
                 xref_addr = xref.fromAddress
+                print "Ref addr:", xref_addr
 
                 ## This will be used to go to the top of the function 
                 ## and check the local variables within the stack frame
@@ -294,9 +309,12 @@ def find_vuln_funcs(func_list):
                 if not found_arg_instrs:
                     print "[-] No arguments found"
                     continue
+                elif num_args > len(found_arg_instrs):
+                    print "[-] Oh no shit hits the fan!!!!"
+                    continue
 
                 args = instrs_to_vars(found_arg_instrs, sizeof_local_vars)
-                #prt_arg(args,name)
+                prt_arg(args,name)
                 check_vuln(xref_addr, args, name)
 
 def main():
